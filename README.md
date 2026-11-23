@@ -12,7 +12,7 @@ A workforce operations workspace for contract employees. The current build inclu
 ## Getting started
 
 1. Connect the Supabase integration to this Vercel project. Its public URL and publishable/anon key are injected as `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-2. The database migrations for the core tables, RLS policies, contract-date validation and audit triggers have been applied to the connected Supabase database.
+2. Apply the SQL migrations in `supabase/migrations/` to the connected Supabase project before using the app. They create the core tables, row-level security policies, contract-date validation and audit history. The migration files are version-controlled; creating them in GitHub does not apply them to Supabase automatically.
 3. Create an account through StaffTrack. Supabase email confirmation may need to be completed before signing in.
 4. Assign the first workspace admin using a trusted SQL console for the connected Supabase project, replacing the email with the account you just created:
 
@@ -40,16 +40,16 @@ Grant tenant admin consent when the selected permission requires it. Verify that
 
 ### Google Calendar
 
-Create a Google Cloud OAuth client, configure the exact deployed callback URL and permitted origins, and request the narrowest Calendar scope needed for event creation. Store client credentials server-side. Google event creation and `.ics` generation are not yet implemented; meeting persistence is currently in Supabase.
+Create a Google Cloud OAuth client, configure the exact deployed callback URL and permitted origins, and request the narrowest Calendar scope needed for event creation. Store client credentials server-side. Google Calendar event creation is not yet implemented. Users can download an `.ics` file from each scheduled meeting for manual import.
 
 ### Scheduled reminders
 
-The protected `GET /api/cron/reminders` endpoint creates idempotent per-user in-app reminders for meetings 24 hours and 15 minutes ahead, and contract-expiry reminders for admins 90, 60 and 30 days ahead. It sends email through Microsoft Graph when Graph credentials are configured. The endpoint requires `Authorization: Bearer <CRON_SECRET>` and is scheduled every five minutes by `vercel.json`. Configure `CRON_SECRET` and the Microsoft Graph variables below in the Vercel project. Vercel Hobby only supports daily cron schedules, so this five-minute schedule requires a plan that allows higher cron frequency; for Hobby, use Supabase pg_cron or another scheduler to call the protected endpoint every five minutes. Microsoft Graph email additionally requires `Mail.Send` admin consent and a configured sender. Delivery records use the notifications table's unique key to avoid duplicate reminders.
+The protected `GET /api/cron/reminders` endpoint creates per-user in-app reminders for meetings 24 hours and 15 minutes ahead, and contract-expiry reminders for admins 90, 60 and 30 days ahead. It sends email through Microsoft Graph when Graph credentials are configured. The endpoint requires `Authorization: Bearer <CRON_SECRET>`. Configure a scheduler that supports the frequency you need and calls this endpoint; check your current Vercel plan's cron limits before relying on the included five-minute `vercel.json` schedule. For lower-cost deployments, Supabase Cron or an external scheduler can call the protected endpoint. Microsoft Graph email additionally requires `Mail.Send` admin consent and a configured sender. Delivery records use the notifications table's unique key to avoid duplicate reminders.
 
 ## Data and access safeguards
 
 - `staff_roles` is the trusted role source. A missing assignment means the user cannot read team data.
-- RLS is enabled on all application tables. Employees, reviews, meetings, contracts and actions require a staff role. Rates and timesheets require an admin role; notifications are scoped to their owner.
+- RLS is enabled on all application tables. Employees, reviews, meetings, contracts, action items and timesheets require a staff role. Employee rates and pay reports are admin-only; managers can record work hours but cannot view pay rates or payroll totals. Notifications are scoped to their owner.
 - Employee rate history is effective-dated. Pay reports sum logged hours against the rate effective on each work date. Unlogged time is not included.
 - A database trigger rejects timesheet dates outside the employee's contract period. Audit triggers capture review, rate and timesheet changes.
 - Managers should not receive pay-table access. Do not add broad table grants or disable RLS to work around permission errors.
@@ -66,4 +66,4 @@ Run the built-in Node test suite with `pnpm test`. It covers effective-dated pay
 
 ## Current implementation boundary
 
-This is an early working foundation, not a production-complete HR system. Employee profiles, edits, and soft-ending are available; permanent deletion is intentionally not exposed so personal records and pay history are retained. Category ratings, rating-history chart, effective-dated admin pay reporting, contract tracking, manual Teams links, Graph event creation, ICS downloads, pasted/uploaded transcripts, rule-based date suggestions, and an explicit action-approval queue are implemented. Google OAuth/Calendar event sync, Graph transcript retrieval, approved action-to-calendar publishing, scheduled meeting/contract reminders, per-user reminder preferences, complete transcript search/detail views, and full server-side validation for every remaining write are still outstanding. The demo seed script uses a service-role key and explicit safety gate; never run it against production. Do not treat external integrations as configured merely because their environment variable names appear in this checklist.
+This is an early working foundation, not a production-complete HR system. Employee profiles, edits, and soft-ending are available; permanent deletion is intentionally not exposed so personal records and pay history are retained. Category ratings, rating-history chart, effective-dated admin pay reporting, contract tracking, manual Teams links, Graph event creation, ICS downloads, pasted/uploaded transcripts, rule-based date suggestions, and an explicit action-approval queue are implemented. Google OAuth/Calendar event sync, Graph transcript retrieval, Google Calendar OAuth/event sync, automatic Microsoft transcript retrieval, complete transcript search/detail views, and full server-side validation for every remaining write are still outstanding. Approved dated transcript actions can be published to Outlook when Graph is configured; otherwise they remain approved in StaffTrack. The demo seed script uses a service-role key and explicit safety gate; never run it against production. Do not treat external integrations as configured merely because their environment variable names appear in this checklist.

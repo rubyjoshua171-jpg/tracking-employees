@@ -71,6 +71,11 @@ export default function StaffTrackApp() {
     setSession(current)
     const { data: member } = await supabase.from('staff_roles').select('role').eq('user_id', current.user.id).maybeSingle()
     setRole(member?.role ?? null)
+    if (member?.role === 'admin' || member?.role === 'manager') {
+      const today = new Date().toISOString().slice(0, 10)
+      const { error: expiryError } = await supabase.from('employees').update({ status: 'ended' }).eq('status', 'active').lt('contract_end', today)
+      if (expiryError) setError('Contract expiry status could not be refreshed. Check your workspace permissions.')
+    }
     const [people, ratings, events, transcriptEvents, pendingItems, alerts, notificationSettings] = await Promise.all([
       supabase.from('employees').select('id,name,email,phone,job_title,department,contract_start,contract_end,status').order('contract_end'),
       supabase.from('reviews').select('id,employee_id,rating,review_date,comments,punctuality,quality,communication,teamwork').order('review_date', { ascending: false }),
@@ -123,7 +128,7 @@ export default function StaffTrackApp() {
   const filteredEmployees = useMemo(() => employees.filter((employee) => {
     const textMatches = `${employee.name} ${employee.job_title} ${employee.department} ${employee.email}`.toLowerCase().includes(search.toLowerCase())
     const days = daysUntil(employee.contract_end)
-    const dateMatches = section !== 'Contracts' || filter === 'all' || (filter === '30' && days <= 30) || (filter === '90' && days <= 90) || (filter === '180' && days <= 180)
+    const dateMatches = section !== 'Contracts' || (days >= 0 && (filter === 'all' || (filter === '30' && days <= 30) || (filter === '90' && days <= 90) || (filter === '180' && days <= 180)))
     return textMatches && dateMatches && (section === 'Contracts' ? employee.status === 'active' : true)
   }), [employees, search, filter, section])
 
@@ -198,8 +203,10 @@ export default function StaffTrackApp() {
     setError('')
     const person = employees.find((entry) => entry.id === String(form.get('employee_id')))
     const date = String(form.get('work_date'))
-    if (!person || date < person.contract_start || date > person.contract_end) { setError('Choose a work date within the employee’s contract period.'); return }
-    const { error: entryError } = await supabase.from('timesheets').insert({ employee_id: person.id, work_date: date, hours: Number(form.get('hours')), notes: String(form.get('notes') || ''), created_by: session?.user.id })
+    const hours = Number(form.get('hours'))
+    if (!person || person.status !== 'active' || date < person.contract_start || date > person.contract_end) { setError('Choose an active employee and a work date within their contract period.'); return }
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) { setError('Enter hours greater than 0 and no more than 24 for one workday.'); return }
+    const { error: entryError } = await supabase.from('timesheets').insert({ employee_id: person.id, work_date: date, hours, notes: String(form.get('notes') || ''), created_by: session?.user.id })
     if (entryError) { setError(entryError.message); return }
     setModal(null); await refresh()
   }
@@ -214,18 +221,35 @@ export default function StaffTrackApp() {
   async function approveActionItems() {
     const selected = actionItems.filter((item) => selectedActionIds.includes(item.id))
     if (!selected.length) { setError('Select at least one suggestion to approve.'); return }
-    const updates = await Promise.all(selected.map((item) => supabase.from('action_items').update({ accepted: true, title: item.title, due_at: item.due_at }).eq('id', item.id)))
-    const approvalError = updates.find((result) => result.error)?.error
-    if (approvalError) { setError(approvalError.message); return }
-    setSelectedActionIds([]); await refresh(); setError('Selected action items were approved. Add calendar sync to publish them as events.')
+    setError('')
+    const response = await fetch('/api/action-items/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        actionIds: selected.map((item) => item.id),
+        edits: selected.map((item) => ({ id: item.id, title: item.title, dueAt: item.due_at })),
+      }),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) { setError(result.error ?? 'The selected actions could not be approved.'); return }
+    setSelectedActionIds([])
+    await refresh()
+    setError(result.calendarConfigured
+      ? `${result.approved} action(s) approved; ${result.calendarAdded} dated item(s) added to the Microsoft Outlook calendar.`
+      : `${result.approved} action(s) approved. Configure Microsoft Graph to publish dated actions to Outlook; undated actions remain in StaffTrack.`)
   }
   async function extendContract(employee: Employee) {
     const nextEnd = window.prompt(`New contract end date for ${employee.name} (YYYY-MM-DD)`, employee.contract_end)
     if (!nextEnd || nextEnd <= employee.contract_end) return
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(nextEnd) || nextEnd <= employee.contract_end) {
+      setError('Enter a valid contract end date later than the current end date.')
+      return
+    }
     const { error: extensionError } = await supabase.from('contract_extensions').insert({ employee_id: employee.id, old_end_date: employee.contract_end, new_end_date: nextEnd, changed_by: session?.user.id })
-    if (!extensionError) await supabase.from('employees').update({ contract_end: nextEnd }).eq('id', employee.id)
-    if (extensionError) setError(extensionError.message)
-    else await refresh()
+    if (extensionError) { setError(extensionError.message); return }
+    const { error: updateError } = await supabase.from('employees').update({ contract_end: nextEnd }).eq('id', employee.id)
+    if (updateError) { setError(`Extension history was saved, but the employee record was not updated: ${updateError.message}`); return }
+    await refresh()
   }
 
   if (!session) return <AuthScreen />
@@ -262,7 +286,7 @@ export default function StaffTrackApp() {
           {section === 'Reviews' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Employee reviews</strong><small>Ratings and feedback from your team</small></div><button className="button button-primary button-small" onClick={() => setModal('review')}><Plus size={15} /> Add review</button></div><div className="review-list">{employees.map((person) => <div className="review-person" key={person.id}><div className="avatar avatar-soft">{initials(person.name)}</div><div className="review-person-copy"><strong>{person.name}</strong><small>{person.job_title} · {reviews.filter((review) => review.employee_id === person.id).length} reviews</small></div><span className="rating"><Star size={14} fill="currentColor" />{avgRating(person.id) ? avgRating(person.id).toFixed(1) : '—'}</span><button className="text-button" onClick={() => setModal('review')}>Add review</button></div>)}{employees.length === 0 && <EmptyLine text="Add employees before writing reviews." />}</div></section>}
           {section === 'Timesheets & pay' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Timesheets & pay</strong><small>Pay is calculated only from logged hours, using the rate effective on each work date.</small></div><button className="button button-primary button-small" onClick={() => setModal('timesheet')}><Plus size={15} /> Log hours</button></div><div className="pay-notice"><ShieldCheck size={18} /><div><strong>Pay details are admin-only</strong><p>{role === 'admin' ? 'Rate history and pay reports are restricted to your admin role. Export a monthly report after reviewing logged hours.' : 'Ask an admin if you need access to pay reports.'}</p></div></div>{role === 'admin' && <PayPanel employees={employees} />}</section>}
           {section === 'Meetings' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Upcoming meetings</strong><small>Schedule Teams meetings and keep everyone in sync</small></div><button className="button button-primary button-small" onClick={() => setModal('meeting')}><Plus size={15} /> Schedule meeting</button></div><div className="meeting-list">{meetings.map((meeting) => <div className="meeting-card" key={meeting.id}><div className="meeting-date"><strong>{new Date(meeting.starts_at).toLocaleDateString('en-ZA', { day: '2-digit' })}</strong><span>{new Date(meeting.starts_at).toLocaleDateString('en-ZA', { month: 'short' }).toUpperCase()}</span></div><div className="meeting-copy"><strong>{meeting.title}</strong><span>{new Date(meeting.starts_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })} · {meeting.duration_minutes} min · {Array.isArray(meeting.attendees) ? meeting.attendees.length : 0} attendees</span></div>{meeting.teams_url ? <a className="button button-outline button-small" href={meeting.teams_url} target="_blank" rel="noreferrer">Join meeting</a> : <span className="meeting-no-link">No join link</span>}<button className="button button-outline button-small calendar-download" onClick={() => downloadIcs(meeting)}>Add to calendar</button><button className="text-button" onClick={() => { setTranscriptText(''); setModal('transcript') }}>Add transcript</button></div>)}{meetings.length === 0 && <EmptyLine text="No upcoming meetings. Schedule your first team check-in." />}</div></section>}
-          {section === 'Transcript review' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Transcript action review</strong><small>Review every suggested date and action before approving it.</small></div><button className="button button-primary button-small" onClick={() => { setTranscriptText(''); setModal('transcript') }}><Plus size={15} /> Add transcript</button></div><div className="action-review-list">{actionItems.map((item) => <div className="action-review-row" key={item.id}><input type="checkbox" aria-label={`Select ${item.title}`} checked={selectedActionIds.includes(item.id)} onChange={(event) => setSelectedActionIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><div className="action-edit-fields"><label className="field">Suggested action<input value={item.title} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, title: event.target.value } : entry))} /></label><label className="field">Detected date<input type="date" value={item.due_at?.slice(0, 10) ?? ''} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, due_at: event.target.value ? new Date(`${event.target.value}T12:00:00`).toISOString() : null } : entry))} /></label><span className="form-hint">From {transcriptMeetings.find((meeting) => meeting.id === item.meeting_id)?.title ?? 'meeting transcript'}</span></div></div>)}{actionItems.length === 0 && <div className="empty-line">No pending actions. Add a transcript to extract dates and follow-ups for review.</div>}</div>{actionItems.length > 0 && <div className="review-approve-row"><span>{selectedActionIds.length} selected · approval does not add calendar events</span><button className="button button-primary button-small" onClick={() => void approveActionItems()}>Approve selected</button></div>}</section>}
+          {section === 'Transcript review' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Transcript action review</strong><small>Review every suggested date and action. Approved dated actions can be added to Outlook.</small></div><button className="button button-primary button-small" onClick={() => { setTranscriptText(''); setModal('transcript') }}><Plus size={15} /> Add transcript</button></div><div className="action-review-list">{actionItems.map((item) => <div className="action-review-row" key={item.id}><input type="checkbox" aria-label={`Select ${item.title}`} checked={selectedActionIds.includes(item.id)} onChange={(event) => setSelectedActionIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><div className="action-edit-fields"><label className="field">Suggested action<input value={item.title} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, title: event.target.value } : entry))} /></label><label className="field">Detected date<input type="date" value={item.due_at?.slice(0, 10) ?? ''} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, due_at: event.target.value ? new Date(`${event.target.value}T12:00:00`).toISOString() : null } : entry))} /></label><span className="form-hint">From {transcriptMeetings.find((meeting) => meeting.id === item.meeting_id)?.title ?? 'meeting transcript'}</span></div></div>)}{actionItems.length === 0 && <div className="empty-line">No pending actions. Add a transcript to extract dates and follow-ups for review.</div>}</div>{actionItems.length > 0 && <div className="review-approve-row"><span>{selectedActionIds.length} selected · dated actions sync to Outlook when connected</span><button className="button button-primary button-small" onClick={() => void approveActionItems()}>Approve selected</button></div>}</section>}
         </>}
         <footer className="page-footer"><span>© 2026 StaffTrack</span><span><ShieldCheck size={13} /> Built for responsible people operations</span><span>South Africa · ZAR</span></footer>
       </div>
