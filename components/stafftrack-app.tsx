@@ -236,10 +236,15 @@ export default function StaffTrackApp() {
   async function extendContract(employee: Employee) {
     const nextEnd = window.prompt(`New contract end date for ${employee.name} (YYYY-MM-DD)`, employee.contract_end)
     if (!nextEnd || nextEnd <= employee.contract_end) return
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(nextEnd) || nextEnd <= employee.contract_end) {
+      setError('Enter a valid contract end date later than the current end date.')
+      return
+    }
     const { error: extensionError } = await supabase.from('contract_extensions').insert({ employee_id: employee.id, old_end_date: employee.contract_end, new_end_date: nextEnd, changed_by: session?.user.id })
-    if (!extensionError) await supabase.from('employees').update({ contract_end: nextEnd }).eq('id', employee.id)
-    if (extensionError) setError(extensionError.message)
-    else await refresh()
+    if (extensionError) { setError(extensionError.message); return }
+    const { error: updateError } = await supabase.from('employees').update({ contract_end: nextEnd }).eq('id', employee.id)
+    if (updateError) { setError(`Extension history was saved, but the employee record was not updated: ${updateError.message}`); return }
+    await refresh()
   }
 
   if (!session) return <AuthScreen />
