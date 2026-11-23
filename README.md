@@ -49,7 +49,7 @@ The protected `GET /api/cron/reminders` endpoint creates per-user in-app reminde
 ## Data and access safeguards
 
 - `staff_roles` is the trusted role source. A missing assignment means the user cannot read team data.
-- RLS is enabled on all application tables. Employees, reviews, meetings, contracts and actions require a staff role. Rates and timesheets require an admin role; notifications are scoped to their owner.
+- RLS is enabled on all application tables. Employees, reviews, meetings, contracts, action items and timesheets require a staff role. Employee rates and pay reports are admin-only; managers can record work hours but cannot view pay rates or payroll totals. Notifications are scoped to their owner.
 - Employee rate history is effective-dated. Pay reports sum logged hours against the rate effective on each work date. Unlogged time is not included.
 - A database trigger rejects timesheet dates outside the employee's contract period. Audit triggers capture review, rate and timesheet changes.
 - Managers should not receive pay-table access. Do not add broad table grants or disable RLS to work around permission errors.
