@@ -71,6 +71,11 @@ export default function StaffTrackApp() {
     setSession(current)
     const { data: member } = await supabase.from('staff_roles').select('role').eq('user_id', current.user.id).maybeSingle()
     setRole(member?.role ?? null)
+    if (member?.role === 'admin' || member?.role === 'manager') {
+      const today = new Date().toISOString().slice(0, 10)
+      const { error: expiryError } = await supabase.from('employees').update({ status: 'ended' }).eq('status', 'active').lt('contract_end', today)
+      if (expiryError) setError('Contract expiry status could not be refreshed. Check your workspace permissions.')
+    }
     const [people, ratings, events, transcriptEvents, pendingItems, alerts, notificationSettings] = await Promise.all([
       supabase.from('employees').select('id,name,email,phone,job_title,department,contract_start,contract_end,status').order('contract_end'),
       supabase.from('reviews').select('id,employee_id,rating,review_date,comments,punctuality,quality,communication,teamwork').order('review_date', { ascending: false }),
