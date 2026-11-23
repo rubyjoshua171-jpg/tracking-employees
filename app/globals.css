@@ -260,69 +260,66 @@ kbd { border: 1px solid #e7ebe9; border-radius: 4px; font: 10px var(--font-ui); 
 @media (max-width: 440px) { .topbar { padding: 0 10px; } .search-box { width: 34px; border: 0; padding: 0; justify-content: center; } .search-box input { display: none; } .breadcrumb { gap: 5px; font-size: 10px; } .page-wrap { padding-left: 11px; padding-right: 11px; } .page-heading { gap: 7px; } .page-heading h1 { font-size: 21px; } .eyebrow { font-size: 7px; letter-spacing: .6px; } .heading-actions .button { padding: 0 9px; font-size: 9px; } .stat-card { padding: 10px; } .stat-top { font-size: 9px; } .stat-icon { width: 26px; height: 26px; } .table-toolbar .toolbar-actions { width: 100%; } .meeting-card { gap: 8px; } .meeting-card > .text-button { display: none; } .modal-backdrop { padding: 9px; } .modal-card { max-height: calc(100vh - 18px); } .form-grid { gap: 11px; padding: 15px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
 
-/* StaffTrack blush pink and white visual theme */
-.sidebar { background: #fff; border-right-color: #f2dfe8; }
-.nav-item { color: #8b6d7c; }
-.nav-item:hover { color: #bd4779; background: #fff2f7; }
-.nav-active { color: #bd4779; background: #fceaf2; }
-.help-card { background: #fff5f8; border-color: #f6e3eb; }
-.help-icon, .quick-icon { color: #bd4779; background: #fceaf2; }
-.avatar-soft { background: #fceaf2; color: #a83e70; }
-.avatar-dark { background: #c94f83; color: #fff; }
-.topbar { background: rgba(255,255,255,.92); }
-.icon-button { color: #8b6d7c; }
-.icon-button:hover { background: #fff0f6; color: #bd4779; }
-.notification-button i { background: #e58bb0; }
-.page-heading h1 { color: #452b38; }
-.button-primary { background: #c94f83; color: #fff; border-color: #c94f83; }
-.button-primary:hover { background: #ad3e70; }
-.button-outline { color: #805b70; border-color: #efd9e4; }
-.button-outline:hover { border-color: #e6b8ce; background: #fff7fa; }
-.stat-icon.teal, .stat-icon.violet, .stat-icon.blue { color: #b4497a; background: #fceaf2; }
-.stat-icon.amber { color: #a86a54; background: #fff0e9; }
-.today-banner { color: #9e3f6e; background: #fceaf2; }
-.today-copy span { color: #966c80; }
-.today-mark { color: #c94f83; }
-.trend-dot { background: #d77ba4; }
-.employee-table thead { background: #fff7fa; }
-.employee-table td { border-top-color: #f8eaf0; }
-.person-cell strong, .employee-name-button { color: #57394a; }
-.employee-name-button:hover { color: #bd4779; }
-.status-pill.active { color: #a34773; background: #fceaf2; }
-.status-pill.ended { color: #916879; background: #f8edf2; }
-.contract-row, .top-person, .review-person, .contract-card, .meeting-card { border-top-color: #f7e9ef; }
-.rating { color: #ad6d49; }
-.expiry-badge.red { color: #ad4568; background: #fdebf1; }
-.expiry-badge.yellow { color: #a66c42; background: #fff1e8; }
-.expiry-badge.green { color: #a34773; background: #fceaf2; }
-.quick-action:hover { background: #fff5f8; }
-.pay-notice { background: #fff0f6; color: #a74475; }
-.pay-notice p { color: #8e6b7e; }
-.meeting-date { background: #fceaf2; color: #b54779; }
-.action-review-row, .review-approve-row { border-top-color: #f2dfe8; }
-.action-review-row > input[type='checkbox'] { accent-color: #c94f83; }
-.empty-icon { color: #bd4779; background: #fceaf2; }
-.inline-notice { border-color: #f0d8e4; background: #fff5f8; color: #8e4c6b; }
-.modal-backdrop { background: rgba(75, 35, 55, .38); }
-.modal-card { box-shadow: 0 20px 70px rgba(107, 48, 77, .15); }
-.field { color: #765365; }
-.field input, .field select, .field textarea { border-color: #efdce5; }
-.field input:focus, .field select:focus, .field textarea:focus { border-color: #d77ba4; outline-color: #f3c8da; }
+/* StaffTrack palette: Baker-Miller, Amaranth, Cherry Blossom, Pink and Misty Rose */
+.sidebar { background: #fff; border-right-color: #F5C7D3; }
+.nav-item { color: #80616B; }
+.nav-item:hover { color: #422B33; background: #FFE5EC; }
+.nav-active { color: #422B33; background: #FAA5BB; }
+.help-card { background: #FFE5EC; border-color: #F5C7D3; }
+.help-icon, .quick-icon { color: #422B33; background: #FFC2D1; }
+.avatar-soft { background: #FFE5EC; color: #704552; }
+.avatar-dark { background: #FAA5BB; color: #422B33; }
+.topbar { background: rgba(255,255,255,.94); }
+.icon-button { color: #80616B; }
+.icon-button:hover { background: #FFE5EC; color: #422B33; }
+.notification-button i { background: #FE8FAB; }
+.page-heading h1 { color: #422B33; }
+.button-primary { background: #FAA5BB; color: #422B33; border-color: #FAA5BB; }
+.button-primary:hover { background: #FE8FAB; border-color: #FE8FAB; }
+.button-outline { color: #704552; border-color: #F5C7D3; }
+.button-outline:hover { border-color: #FAA5BB; background: #FFE5EC; }
+.stat-icon.teal, .stat-icon.violet, .stat-icon.blue { color: #704552; background: #FFE5EC; }
+.stat-icon.amber { color: #98613F; background: #FFF0F3; }
+.today-banner { color: #422B33; background: #FFE5EC; }
+.today-copy span { color: #80616B; }
+.today-mark { color: #704552; }
+.trend-dot { background: #FE8FAB; }
+.employee-table thead { background: #FFF7F9; }
+.employee-table td { border-top-color: #F8E2E9; }
+.person-cell strong, .employee-name-button { color: #573943; }
+.employee-name-button:hover { color: #704552; }
+.status-pill.active { color: #704552; background: #FFE5EC; }
+.status-pill.ended { color: #80616B; background: #FFF0F3; }
+.contract-row, .top-person, .review-person, .contract-card, .meeting-card { border-top-color: #F5C7D3; }
+.rating { color: #98613F; }
+.expiry-badge.red { color: #A53E5C; background: #FFE5EC; }
+.expiry-badge.yellow { color: #98613F; background: #FFF0F3; }
+.expiry-badge.green { color: #704552; background: #FFE5EC; }
+.quick-action:hover { background: #FFF7F9; }
+.pay-notice { background: #FFE5EC; color: #704552; }
+.pay-notice p { color: #80616B; }
+.meeting-date { background: #FFC2D1; color: #422B33; }
+.action-review-row, .review-approve-row { border-top-color: #F5C7D3; }
+.action-review-row > input[type='checkbox'] { accent-color: #FE8FAB; }
+.empty-icon { color: #704552; background: #FFE5EC; }
+.inline-notice { border-color: #F5C7D3; background: #FFF7F9; color: #704552; }
+.modal-backdrop { background: rgba(66, 43, 51, .38); }
+.modal-card { box-shadow: 0 20px 70px rgba(112, 69, 82, .15); }
+.field { color: #704552; }
+.field input, .field select, .field textarea { border-color: #F5C7D3; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: #FE8FAB; outline-color: #FFC2D1; }
 .auth-screen { background: #fff; }
-.auth-kicker { color: #bd4779; }
-.auth-decoration { background: linear-gradient(145deg, #f8dce8 0%, #eebbd0 55%, #d987ad 100%); }
-.orb { border-color: rgba(255,255,255,.42); }
-.quote-mark { color: #bd4779; }
-.auth-quote { color: #633c52; }
-.auth-quote em { color: #a74475; }
-.auth-quote > span { color: #80566d; }
-.auth-switch button { color: #bd4779; }
-.auth-success { background: #fceaf2; color: #a74475; }
-.auth-foot { color: #a68b9a; }
-.profile-summary { border-bottom-color: #f2dfe8; }
-.profile-history { border-top-color: #f2dfe8; }
-.profile-facts { color: #57394a; }
-.page-footer { color: #b08e9f; }
-@media (prefers-reduced-motion: no-preference) {
-  .button-primary, .nav-item, .quick-action, .icon-button { transition: background .16s ease, color .16s ease, border-color .16s ease; }
-}
+.auth-kicker { color: #704552; }
+.auth-decoration { background: linear-gradient(145deg, #FFE5EC 0%, #FFC2D1 55%, #FE8FAB 100%); }
+.orb { border-color: rgba(255,255,255,.55); }
+.quote-mark { color: #704552; }
+.auth-quote { color: #422B33; }
+.auth-quote em { color: #704552; }
+.auth-quote > span { color: #80616B; }
+.auth-switch button { color: #704552; }
+.auth-success { background: #FFE5EC; color: #704552; }
+.auth-foot { color: #9B7C86; }
+.profile-summary { border-bottom-color: #F5C7D3; }
+.profile-history { border-top-color: #F5C7D3; }
+.profile-facts { color: #573943; }
+.page-footer { color: #9B7C86; }
