@@ -30,5 +30,5 @@ test('contract expiry bands follow the 30 and 90 day thresholds', () => {
 })
 
 test('contract days remaining uses the contract end date', () => {
-  assert.equal(contractDaysRemaining('2026-12-01', new Date('2026-11-23T12:00:00')), 9)
+  assert.equal(contractDaysRemaining('2026-12-01', new Date('2026-11-23T12:00:00.000Z')), 9)
 })
