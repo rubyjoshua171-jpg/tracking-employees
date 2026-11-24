@@ -135,7 +135,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1
@@ -149,7 +149,7 @@ create or replace function public.validate_timesheet_contract_period()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   contract_start date;

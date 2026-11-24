@@ -23,7 +23,7 @@ create or replace function public.capture_stafftrack_audit()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   old_json jsonb;
