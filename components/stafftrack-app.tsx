@@ -13,6 +13,9 @@ type Meeting = { id: string; title: string; starts_at: string; duration_minutes:
 type ActionItem = { id: string; meeting_id: string; title: string; due_at: string | null; accepted: boolean }
 type NotificationItem = { id: string; title: string; body: string; read_at: string | null; created_at: string }
 type NotificationPreferences = { meeting_email_enabled: boolean; in_app_enabled: boolean; contract_email_enabled: boolean }
+type TranscriptSummary = { id: string; meeting_id: string; source: 'pasted' | 'upload'; created_at: string }
+type TranscriptSearchResult = TranscriptSummary & { snippet: string }
+type TranscriptDetail = TranscriptSummary & { content: string }
 type Section = 'Overview' | 'Employees' | 'Reviews' | 'Timesheets & pay' | 'Contracts' | 'Meetings' | 'Transcript review'
 
 const supabase = createClient()
@@ -29,13 +32,15 @@ function downloadIcs(meeting: Meeting) {
   const format = (date: Date) => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
   const startsAt = new Date(meeting.starts_at)
   const endsAt = new Date(startsAt.getTime() + meeting.duration_minutes * 60_000)
-  const body = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//StaffTrack//Meetings//EN','BEGIN:VEVENT',`UID:${meeting.id}@stafftrack`,`DTSTAMP:${format(new Date())}`,`DTSTART:${format(startsAt)}`,`DTEND:${format(endsAt)}`,`SUMMARY:${icsText(meeting.title)}`,`DESCRIPTION:${icsText(meeting.agenda ?? '')}`,...(meeting.teams_url ? [`URL:${meeting.teams_url}`] : []),'END:VEVENT','END:VCALENDAR'].join('\\r\\n')
+  const body = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//StaffTrack//Meetings//EN','BEGIN:VEVENT',`UID:${meeting.id}@stafftrack`,`DTSTAMP:${format(new Date())}`,`DTSTART:${format(startsAt)}`,`DTEND:${format(endsAt)}`,`SUMMARY:${icsText(meeting.title)}`,`DESCRIPTION:${icsText(meeting.agenda ?? '')}`,...(meeting.teams_url ? [`URL:${icsText(meeting.teams_url)}`] : []),'END:VEVENT','END:VCALENDAR'].join('\r\n')
   const url = URL.createObjectURL(new Blob([body], { type: 'text/calendar;charset=utf-8' }))
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = `${meeting.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'stafftrack-meeting'}.ics`
+  document.body.append(anchor)
   anchor.click()
-  URL.revokeObjectURL(url)
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export default function StaffTrackApp() {
@@ -46,6 +51,11 @@ export default function StaffTrackApp() {
   const [reviews, setReviews] = useState<Review[]>([])
   const [meetings, setMeetings] = useState<Meeting[]>([])
   const [transcriptMeetings, setTranscriptMeetings] = useState<Meeting[]>([])
+  const [transcriptRecords, setTranscriptRecords] = useState<TranscriptSummary[]>([])
+  const [transcriptResults, setTranscriptResults] = useState<TranscriptSearchResult[] | null>(null)
+  const [transcriptQuery, setTranscriptQuery] = useState('')
+  const [selectedTranscript, setSelectedTranscript] = useState<TranscriptDetail | null>(null)
+  const [transcriptDetailLoading, setTranscriptDetailLoading] = useState(false)
   const [actionItems, setActionItems] = useState<ActionItem[]>([])
   const [selectedActionIds, setSelectedActionIds] = useState<string[]>([])
   const [transcriptText, setTranscriptText] = useState('')
@@ -76,11 +86,12 @@ export default function StaffTrackApp() {
       const { error: expiryError } = await supabase.from('employees').update({ status: 'ended' }).eq('status', 'active').lt('contract_end', today)
       if (expiryError) setError('Contract expiry status could not be refreshed. Check your workspace permissions.')
     }
-    const [people, ratings, events, transcriptEvents, pendingItems, alerts, notificationSettings] = await Promise.all([
+    const [people, ratings, events, transcriptEvents, transcripts, pendingItems, alerts, notificationSettings] = await Promise.all([
       supabase.from('employees').select('id,name,email,phone,job_title,department,contract_start,contract_end,status').order('contract_end'),
       supabase.from('reviews').select('id,employee_id,rating,review_date,comments,punctuality,quality,communication,teamwork').order('review_date', { ascending: false }),
       supabase.from('meetings').select('id,title,starts_at,duration_minutes,teams_url,attendees,agenda').gte('starts_at', new Date().toISOString()).order('starts_at').limit(30),
       supabase.from('meetings').select('id,title,starts_at,duration_minutes,teams_url,attendees,agenda').order('starts_at', { ascending: false }).limit(50),
+      supabase.from('transcripts').select('id,meeting_id,source,created_at').order('created_at', { ascending: false }).limit(50),
       supabase.from('action_items').select('id,meeting_id,title,due_at,accepted').eq('accepted', false).order('created_at', { ascending: false }).limit(100),
       supabase.from('notifications').select('id,title,body,read_at,created_at').or('notification_key.is.null,notification_key.like.inapp:%').order('created_at', { ascending: false }).limit(20),
       supabase.from('notification_preferences').select('meeting_email_enabled,in_app_enabled,contract_email_enabled').eq('user_id', current.user.id).maybeSingle(),
@@ -101,6 +112,7 @@ export default function StaffTrackApp() {
     setReviews((ratings.data ?? []) as Review[])
     setMeetings((events.data ?? []) as Meeting[])
     setTranscriptMeetings((transcriptEvents.data ?? []) as Meeting[])
+    setTranscriptRecords((transcripts.data ?? []) as TranscriptSummary[])
     setActionItems((pendingItems.data ?? []) as ActionItem[])
     const inbox = (alerts.data ?? []) as NotificationItem[]
     setPreferences(notificationSettings.data ?? { meeting_email_enabled: true, in_app_enabled: true, contract_email_enabled: true })
@@ -215,9 +227,30 @@ export default function StaffTrackApp() {
     const response = await fetch('/api/transcripts/extract', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ meetingId: String(form.get('meeting_id')), content: String(form.get('content')), source: String(form.get('source') || 'pasted') }) })
     const result = await response.json().catch(() => ({}))
     if (!response.ok) { setError(result.error ?? 'Transcript could not be saved.'); return }
-    setModal(null); setTranscriptText(''); setTranscriptSource('pasted'); setSelectedActionIds([]); setSection('Transcript review'); await refresh()
+    setModal(null); setTranscriptText(''); setTranscriptSource('pasted'); setSelectedActionIds([]); setTranscriptResults(null); setTranscriptQuery(''); setSection('Transcript review'); await refresh()
     setError(`${result.suggestions?.length ?? 0} suggestions saved for review. Nothing was added to a calendar.`)
   }
+  async function searchTranscripts(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const query = transcriptQuery.trim()
+    if (query.length < 2) { setError('Enter at least 2 characters to search transcripts.'); return }
+    setError('')
+    const response = await fetch(`/api/transcripts/search?q=${encodeURIComponent(query)}`)
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) { setError(result.error ?? 'Transcript search is unavailable.'); return }
+    setTranscriptResults((result.transcripts ?? []) as TranscriptSearchResult[])
+  }
+
+  async function openTranscript(id: string) {
+    setTranscriptDetailLoading(true)
+    setSelectedTranscript(null)
+    const response = await fetch(`/api/transcripts/${encodeURIComponent(id)}`)
+    const result = await response.json().catch(() => ({}))
+    setTranscriptDetailLoading(false)
+    if (!response.ok) { setError(result.error ?? 'Transcript could not be loaded.'); return }
+    setSelectedTranscript(result.transcript as TranscriptDetail)
+  }
+
   async function approveActionItems() {
     const selected = actionItems.filter((item) => selectedActionIds.includes(item.id))
     if (!selected.length) { setError('Select at least one suggestion to approve.'); return }
@@ -241,7 +274,11 @@ export default function StaffTrackApp() {
   async function extendContract(employee: Employee) {
     const nextEnd = window.prompt(`New contract end date for ${employee.name} (YYYY-MM-DD)`, employee.contract_end)
     if (!nextEnd || nextEnd <= employee.contract_end) return
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(nextEnd) || nextEnd <= employee.contract_end) {
+    const parsedEnd = new Date(`${nextEnd}T00:00:00.000Z`)
+    const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(nextEnd)
+      && !Number.isNaN(parsedEnd.getTime())
+      && parsedEnd.toISOString().slice(0, 10) === nextEnd
+    if (!isValidDate || nextEnd <= employee.contract_end) {
       setError('Enter a valid contract end date later than the current end date.')
       return
     }
@@ -286,7 +323,7 @@ export default function StaffTrackApp() {
           {section === 'Reviews' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Employee reviews</strong><small>Ratings and feedback from your team</small></div><button className="button button-primary button-small" onClick={() => setModal('review')}><Plus size={15} /> Add review</button></div><div className="review-list">{employees.map((person) => <div className="review-person" key={person.id}><div className="avatar avatar-soft">{initials(person.name)}</div><div className="review-person-copy"><strong>{person.name}</strong><small>{person.job_title} · {reviews.filter((review) => review.employee_id === person.id).length} reviews</small></div><span className="rating"><Star size={14} fill="currentColor" />{avgRating(person.id) ? avgRating(person.id).toFixed(1) : '—'}</span><button className="text-button" onClick={() => setModal('review')}>Add review</button></div>)}{employees.length === 0 && <EmptyLine text="Add employees before writing reviews." />}</div></section>}
           {section === 'Timesheets & pay' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Timesheets & pay</strong><small>Pay is calculated only from logged hours, using the rate effective on each work date.</small></div><button className="button button-primary button-small" onClick={() => setModal('timesheet')}><Plus size={15} /> Log hours</button></div><div className="pay-notice"><ShieldCheck size={18} /><div><strong>Pay details are admin-only</strong><p>{role === 'admin' ? 'Rate history and pay reports are restricted to your admin role. Export a monthly report after reviewing logged hours.' : 'Ask an admin if you need access to pay reports.'}</p></div></div>{role === 'admin' && <PayPanel employees={employees} />}</section>}
           {section === 'Meetings' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Upcoming meetings</strong><small>Schedule Teams meetings and keep everyone in sync</small></div><button className="button button-primary button-small" onClick={() => setModal('meeting')}><Plus size={15} /> Schedule meeting</button></div><div className="meeting-list">{meetings.map((meeting) => <div className="meeting-card" key={meeting.id}><div className="meeting-date"><strong>{new Date(meeting.starts_at).toLocaleDateString('en-ZA', { day: '2-digit' })}</strong><span>{new Date(meeting.starts_at).toLocaleDateString('en-ZA', { month: 'short' }).toUpperCase()}</span></div><div className="meeting-copy"><strong>{meeting.title}</strong><span>{new Date(meeting.starts_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })} · {meeting.duration_minutes} min · {Array.isArray(meeting.attendees) ? meeting.attendees.length : 0} attendees</span></div>{meeting.teams_url ? <a className="button button-outline button-small" href={meeting.teams_url} target="_blank" rel="noreferrer">Join meeting</a> : <span className="meeting-no-link">No join link</span>}<button className="button button-outline button-small calendar-download" onClick={() => downloadIcs(meeting)}>Add to calendar</button><button className="text-button" onClick={() => { setTranscriptText(''); setModal('transcript') }}>Add transcript</button></div>)}{meetings.length === 0 && <EmptyLine text="No upcoming meetings. Schedule your first team check-in." />}</div></section>}
-          {section === 'Transcript review' && <section className="panel full-panel"><div className="table-toolbar"><div><strong>Transcript action review</strong><small>Review every suggested date and action. Approved dated actions can be added to Outlook.</small></div><button className="button button-primary button-small" onClick={() => { setTranscriptText(''); setModal('transcript') }}><Plus size={15} /> Add transcript</button></div><div className="action-review-list">{actionItems.map((item) => <div className="action-review-row" key={item.id}><input type="checkbox" aria-label={`Select ${item.title}`} checked={selectedActionIds.includes(item.id)} onChange={(event) => setSelectedActionIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><div className="action-edit-fields"><label className="field">Suggested action<input value={item.title} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, title: event.target.value } : entry))} /></label><label className="field">Detected date<input type="date" value={item.due_at?.slice(0, 10) ?? ''} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, due_at: event.target.value ? new Date(`${event.target.value}T12:00:00`).toISOString() : null } : entry))} /></label><span className="form-hint">From {transcriptMeetings.find((meeting) => meeting.id === item.meeting_id)?.title ?? 'meeting transcript'}</span></div></div>)}{actionItems.length === 0 && <div className="empty-line">No pending actions. Add a transcript to extract dates and follow-ups for review.</div>}</div>{actionItems.length > 0 && <div className="review-approve-row"><span>{selectedActionIds.length} selected · dated actions sync to Outlook when connected</span><button className="button button-primary button-small" onClick={() => void approveActionItems()}>Approve selected</button></div>}</section>}
+          {section === 'Transcript review' && <div className="transcript-workspace"><section className="panel full-panel"><div className="table-toolbar"><div><strong>Transcript action review</strong><small>Review every suggested date and action. Approved dated actions can be added to Outlook.</small></div><button className="button button-primary button-small" onClick={() => { setTranscriptText(''); setModal('transcript') }}><Plus size={15} /> Add transcript</button></div><div className="action-review-list">{actionItems.map((item) => <div className="action-review-row" key={item.id}><input type="checkbox" aria-label={`Select ${item.title}`} checked={selectedActionIds.includes(item.id)} onChange={(event) => setSelectedActionIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><div className="action-edit-fields"><label className="field">Suggested action<input value={item.title} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, title: event.target.value } : entry))} /></label><label className="field">Detected date<input type="date" value={item.due_at?.slice(0, 10) ?? ''} onChange={(event) => setActionItems((items) => items.map((entry) => entry.id === item.id ? { ...entry, due_at: event.target.value ? new Date(`${event.target.value}T12:00:00`).toISOString() : null } : entry))} /></label><span className="form-hint">From {transcriptMeetings.find((meeting) => meeting.id === item.meeting_id)?.title ?? 'meeting transcript'}</span></div></div>)}{actionItems.length === 0 && <div className="empty-line">No pending actions. Add a transcript to extract dates and follow-ups for review.</div>}</div>{actionItems.length > 0 && <div className="review-approve-row"><span>{selectedActionIds.length} selected · dated actions sync to Outlook when connected</span><button className="button button-primary button-small" onClick={() => void approveActionItems()}>Approve selected</button></div>}</section><section className="panel full-panel"><div className="table-toolbar"><div><strong>Transcript archive</strong><small>Search transcript text and open saved meeting notes.</small></div></div><form className="transcript-search" onSubmit={searchTranscripts}><label className="field">Search transcripts<input value={transcriptQuery} onChange={(event) => setTranscriptQuery(event.target.value)} minLength={2} maxLength={100} placeholder="Find a topic, person, or follow-up" /></label><div className="transcript-search-actions"><button className="button button-primary button-small" type="submit">Search</button>{transcriptResults !== null && <button className="button button-outline button-small" type="button" onClick={() => { setTranscriptResults(null); setTranscriptQuery('') }}>Clear</button>}</div></form><div className="transcript-archive">{(transcriptResults ?? transcriptRecords).map((transcript) => <article className="transcript-record" key={transcript.id}><div className="transcript-record-copy"><strong>{transcriptMeetings.find((meeting) => meeting.id === transcript.meeting_id)?.title ?? 'Meeting transcript'}</strong><span>{new Date(transcript.created_at).toLocaleString('en-ZA')} · {transcript.source === 'upload' ? 'Uploaded file' : 'Pasted text'}</span>{'snippet' in transcript && typeof transcript.snippet === 'string' && <p>{transcript.snippet}</p>}</div><button className="button button-outline button-small" onClick={() => void openTranscript(transcript.id)}>View transcript</button></article>)}{(transcriptResults ?? transcriptRecords).length === 0 && <div className="empty-line">{transcriptResults === null ? 'No transcripts have been added yet.' : 'No transcripts matched that search.'}</div>}</div></section></div>}
         </>}
         <footer className="page-footer"><span>© 2026 StaffTrack</span><span><ShieldCheck size={13} /> Built for responsible people operations</span><span>South Africa · ZAR</span></footer>
       </div>
@@ -300,6 +337,7 @@ export default function StaffTrackApp() {
       {modal === 'timesheet' && <form action={saveTimesheet} className="form-grid"><label className="field full-field">Employee<select name="employee_id" required defaultValue=""><option value="" disabled>Select an employee</option>{employees.filter((person) => person.status === 'active').map((person) => <option key={person.id} value={person.id}>{person.name} · {fmtDate(person.contract_start)} – {fmtDate(person.contract_end)}</option>)}</select></label><label className="field">Work date<input type="date" name="work_date" required /></label><label className="field">Hours worked<input type="number" name="hours" min="0.25" max="24" step="0.25" required placeholder="8" /></label><label className="field full-field">Notes<textarea name="notes" rows={3} placeholder="Optional details about work completed" /></label><FormButtons onCancel={() => setModal(null)} submit="Save timesheet" /></form>}
       {modal === 'transcript' && <form action={saveTranscript} className="form-grid"><label className="field full-field">Meeting<select name="meeting_id" required defaultValue=""><option value="" disabled>Select a meeting</option>{transcriptMeetings.map((meeting) => <option value={meeting.id} key={meeting.id}>{meeting.title}</option>)}</select></label><label className="field full-field">Upload transcript (.vtt or .txt)<input type="file" accept=".vtt,.txt,text/vtt,text/plain" onChange={async (event) => { const file = event.currentTarget.files?.[0]; if (!file) return; if (!/\.(vtt|txt)$/i.test(file.name)) { setError('Choose a .vtt or .txt transcript file.'); return } setTranscriptText(await file.text()); setTranscriptSource('upload') }} /></label><input type="hidden" name="source" value={transcriptSource} /><label className="field full-field">Transcript text<textarea name="content" rows={8} required value={transcriptText} onChange={(event) => { setTranscriptText(event.target.value); setTranscriptSource('pasted') }} placeholder="Paste transcript text here or upload a file…" /></label><p className="form-hint full-field">Dates on follow-up/action lines are suggestions only. Review and edit every suggestion before approving.</p><FormButtons onCancel={() => { setModal(null); setTranscriptText('') }} submit="Extract suggestions" /></form>}
     </Modal>}
+    {(selectedTranscript || transcriptDetailLoading) && <Modal title={selectedTranscript ? transcriptMeetings.find((meeting) => meeting.id === selectedTranscript.meeting_id)?.title ?? 'Meeting transcript' : 'Loading transcript'} onClose={() => { setSelectedTranscript(null); setTranscriptDetailLoading(false) }}>{transcriptDetailLoading ? <div className="loading-state">Loading transcript…</div> : selectedTranscript && <div className="transcript-detail"><p>{new Date(selectedTranscript.created_at).toLocaleString('en-ZA')} · {selectedTranscript.source === 'upload' ? 'Uploaded file' : 'Pasted text'}</p><pre>{selectedTranscript.content}</pre></div>}</Modal>}
   </div>
 }
 
