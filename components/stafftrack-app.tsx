@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { isSupabaseConfigured } from '@/lib/supabase/config'
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import { calculatePayForEntries, contractDaysRemaining, contractExpiryBand } from '@/lib/stafftrack-logic.mjs'
 import ReviewHistoryChart from '@/components/review-history-chart'
@@ -18,7 +19,8 @@ type TranscriptSearchResult = TranscriptSummary & { snippet: string }
 type TranscriptDetail = TranscriptSummary & { content: string }
 type Section = 'Overview' | 'Employees' | 'Reviews' | 'Timesheets & pay' | 'Contracts' | 'Meetings' | 'Transcript review'
 
-const supabase = createClient()
+// Only create the client when configured, so builds without Supabase keys don't crash.
+const supabase = (isSupabaseConfigured ? createClient() : null) as ReturnType<typeof createClient>
 const nav: { name: Section; icon: typeof LayoutDashboard }[] = [
   { name: 'Overview', icon: LayoutDashboard }, { name: 'Employees', icon: Users }, { name: 'Reviews', icon: Star },
   { name: 'Timesheets & pay', icon: WalletCards }, { name: 'Contracts', icon: CalendarRange }, { name: 'Meetings', icon: CalendarDays }, { name: 'Transcript review', icon: Activity },
@@ -44,6 +46,15 @@ function downloadIcs(meeting: Meeting) {
 }
 
 export default function StaffTrackApp() {
+  if (!isSupabaseConfigured) return <SetupNotice />
+  return <StaffTrackWorkspace />
+}
+
+function SetupNotice() {
+  return <div className="auth-screen"><div className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Activity size={19} strokeWidth={2.5} /></span><span>staff<span className="brand-light">track</span><small>PEOPLE OPERATIONS</small></span></a><div className="auth-kicker">SETUP REQUIRED</div><h1>StaffTrack isn’t connected yet.</h1><p className="auth-intro">This workspace needs a Supabase project before sign-in and data features can work. Add <code>NEXT_PUBLIC_SUPABASE_URL</code> and <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to the site’s environment variables, then redeploy.</p></div></div>
+}
+
+function StaffTrackWorkspace() {
   const [session, setSession] = useState<Session | null>(null)
   const [role, setRole] = useState<'admin' | 'manager' | null>(null)
   const [section, setSection] = useState<Section>('Overview')
