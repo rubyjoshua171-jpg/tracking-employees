@@ -1,5 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
+import { getGoogleAuthorizationUrl, getGoogleUserToken, isGoogleAuthorizationRequired } from '@/lib/google-connect'
 import { z } from 'zod'
+
+export const runtime = 'nodejs'
 
 const meetingSchema = z.object({
   title: z.string().trim().min(2).max(180),
@@ -7,24 +10,7 @@ const meetingSchema = z.object({
   durationMinutes: z.number().int().min(5).max(480),
   agenda: z.string().max(8000).default(''),
   attendees: z.array(z.string().trim().email().max(254)).max(100).default([]),
-  teamsUrl: z.string().url().nullable().optional(),
 })
-
-async function getGraphToken() {
-  const tenantId = process.env.MICROSOFT_TENANT_ID
-  const clientId = process.env.MICROSOFT_CLIENT_ID
-  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET
-  if (!tenantId || !clientId || !clientSecret) return null
-  const response = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials' }),
-    cache: 'no-store',
-  })
-  if (!response.ok) return null
-  const payload = await response.json() as { access_token?: string }
-  return payload.access_token ?? null
-}
 
 export async function POST(request: Request) {
   const supabase = await createClient()
@@ -40,41 +26,39 @@ export async function POST(request: Request) {
   const startsAt = new Date(input.startsAt)
   if (startsAt.getTime() <= Date.now()) return Response.json({ error: 'Choose a future meeting time.' }, { status: 400 })
 
-  let teamsUrl = input.teamsUrl ?? null
-  let calendarEventId: string | null = null
-  let graphMeetingId: string | null = null
-  let accessToken: string | null = null
-
-  if (!teamsUrl) {
-    const organizerId = process.env.MICROSOFT_USER_ID
-    if (!organizerId) return Response.json({ error: 'Connect Microsoft Teams or paste an existing Teams meeting link.' }, { status: 503 })
-    accessToken = await getGraphToken()
-    if (!accessToken) return Response.json({ error: 'Microsoft Graph is not configured or admin consent is missing.' }, { status: 503 })
-    const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000)
-    const graphResponse = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(organizerId)}/events?$select=id,onlineMeeting`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json', Prefer: 'outlook.timezone="UTC"' },
-      body: JSON.stringify({
-        subject: input.title,
-        body: { contentType: 'text', content: input.agenda },
-        start: { dateTime: startsAt.toISOString(), timeZone: 'UTC' },
-        end: { dateTime: endsAt.toISOString(), timeZone: 'UTC' },
-        attendees: input.attendees.map((address) => ({ emailAddress: { address }, type: 'required' })),
-        isOnlineMeeting: true,
-        onlineMeetingProvider: 'teamsForBusiness',
-      }),
-      cache: 'no-store',
-    })
-    if (!graphResponse.ok) return Response.json({ error: 'Microsoft Graph could not create the meeting. Check the organizer, permissions, and application access policy.' }, { status: 502 })
-    const event = await graphResponse.json() as { id?: string; onlineMeeting?: { joinUrl?: string } }
-    if (!event.id || !event.onlineMeeting?.joinUrl) return Response.json({ error: 'Microsoft Graph created no Teams join link. Confirm Teams is enabled for the organizer.' }, { status: 502 })
-    teamsUrl = event.onlineMeeting.joinUrl
-    calendarEventId = event.id
-    graphMeetingId = event.id
-  } else {
-    const parsedUrl = new URL(teamsUrl)
-    if (parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'teams.microsoft.com') return Response.json({ error: 'Use a secure teams.microsoft.com meeting URL.' }, { status: 400 })
+  let accessToken: string
+  try {
+    accessToken = await getGoogleUserToken(user.id)
+  } catch (authorizationError) {
+    if (!isGoogleAuthorizationRequired(authorizationError)) {
+      return Response.json({ error: 'Google Calendar is unavailable. Try again shortly.' }, { status: 503 })
+    }
+    try {
+      const authorizationUrl = await getGoogleAuthorizationUrl(user.id, `${new URL(request.url).origin}/?googleCalendar=connected`)
+      return Response.json({ error: 'Connect your Google Calendar to schedule meetings and create Meet links.', authorizationUrl }, { status: 428 })
+    } catch {
+      return Response.json({ error: 'Google Calendar authorization is unavailable. Try again shortly.' }, { status: 503 })
+    }
   }
+
+  const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000)
+  const eventResponse = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      summary: input.title,
+      description: input.agenda,
+      start: { dateTime: startsAt.toISOString() },
+      end: { dateTime: endsAt.toISOString() },
+      attendees: input.attendees.map((email) => ({ email })),
+      conferenceData: { createRequest: { requestId: crypto.randomUUID().replaceAll('-', ''), conferenceSolutionKey: { type: 'hangoutsMeet' } } },
+    }),
+    cache: 'no-store',
+  })
+  if (!eventResponse.ok) return Response.json({ error: 'Google Calendar could not create the event. Check your calendar access and try again.' }, { status: 502 })
+
+  const event = await eventResponse.json() as { id?: string; hangoutLink?: string }
+  if (!event.id) return Response.json({ error: 'Google Calendar returned no event ID. Try again.' }, { status: 502 })
 
   const { data: meeting, error } = await supabase.from('meetings').insert({
     title: input.title,
@@ -82,14 +66,18 @@ export async function POST(request: Request) {
     duration_minutes: input.durationMinutes,
     agenda: input.agenda,
     attendees: input.attendees,
-    teams_url: teamsUrl,
-    calendar_event_id: calendarEventId,
-    graph_meeting_id: graphMeetingId,
+    teams_url: event.hangoutLink ?? null,
+    calendar_event_id: event.id,
+    graph_meeting_id: null,
     created_by: user.id,
   }).select('id,title,starts_at,duration_minutes,teams_url,attendees,calendar_event_id').single()
 
   if (error) {
-    if (calendarEventId && accessToken) await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(process.env.MICROSOFT_USER_ID!)}/events/${encodeURIComponent(calendarEventId)}`, { method: 'DELETE', headers: { authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
+    await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event.id)}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    })
     return Response.json({ error: 'The meeting could not be saved to StaffTrack.' }, { status: 500 })
   }
   return Response.json({ meeting }, { status: 201 })

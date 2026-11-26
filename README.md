@@ -7,7 +7,7 @@ A workforce operations workspace for contract employees. The current build inclu
 - Next.js App Router, React, TypeScript and CSS variables (`app/theme.css`)
 - Supabase Auth and Postgres with RLS
 - Pay is kept in an admin-only `employee_rates` table, separate from employee profile records
-- Reminder email direction: Microsoft Graph `sendMail` (no Resend dependency)
+- Google Calendar and Meet access is authorized per signed-in staff user through the attached Vercel Connect connector
 
 ## Getting started
 
@@ -23,28 +23,17 @@ A workforce operations workspace for contract employees. The current build inclu
    ```
 
    Add managers in the same way with the `manager` role. Role assignments are intentionally not self-service: a signed-in user cannot grant themselves admin access.
-5. Set production environment variables and callback URLs in the project settings. Keep service-role keys, Graph secrets and Google client secrets server-only; never expose them with a `NEXT_PUBLIC_` prefix.
+5. Set the Supabase and cron environment variables in the project settings. Admins and managers connect their own Google account from the Meetings or Transcript review page; Vercel Connect manages provider credentials, so no Google client secret is stored in the app.
 
 ## Integrations to configure before enabling those workflows
 
-### Microsoft Teams and reminder email
+### Google Calendar and Meet
 
-Register an app in Microsoft Entra ID and configure the tenant, client ID, and client secret as server-only environment variables. Add the least-privilege Microsoft Graph permissions needed for the selected flow:
-
-- Online meeting creation: `OnlineMeetings.ReadWrite` (delegated or application permission, depending on the chosen identity model).
-- Transcript access: `OnlineMeetingTranscript.Read.All` where allowed by tenant policy and licensing.
-- Calendar sync (if using Microsoft calendar): `Calendars.ReadWrite`.
-- Reminder emails from the company mailbox: `Mail.Send`.
-
-Grant tenant admin consent when the selected permission requires it. Verify that the organization's Microsoft 365 plan and Teams policies allow meeting transcription. The meeting API now creates a Teams-enabled Microsoft Graph calendar event (including attendee invitations) when `MICROSOFT_TENANT_ID`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_USER_ID` are configured. Pasting an existing `https://teams.microsoft.com` link is the fallback. The service-principal flow needs tenant admin consent for `Calendars.ReadWrite` and the appropriate Teams application access policy on the organizer. Microsoft Graph transcript retrieval and Graph `sendMail` are not yet implemented.
-
-### Google Calendar
-
-Create a Google Cloud OAuth client, configure the exact deployed callback URL and permitted origins, and request the narrowest Calendar scope needed for event creation. Store client credentials server-side. Google Calendar event creation is not yet implemented. Users can download an `.ics` file from each scheduled meeting for manual import.
+Admins and managers connect their own Google account from StaffTrack. The Vercel Connect connector requests Calendar event access and Google Meet read-only access for the signed-in user. Scheduling creates a Google Calendar event, invites attendees, and requests a Google Meet link. Dated transcript actions are added to the approving user's calendar only after explicit approval. Meet transcript retrieval is available to the user who scheduled the meeting, after Meet has generated a transcript; the organization's Google Workspace policy must permit transcription and transcript access. No Google OAuth client secret is stored in project environment variables.
 
 ### Scheduled reminders
 
-The protected `GET /api/cron/reminders` endpoint creates per-user in-app reminders for meetings 24 hours and 15 minutes ahead, and contract-expiry reminders for admins 90, 60 and 30 days ahead. It sends email through Microsoft Graph when Graph credentials are configured. The endpoint requires `Authorization: Bearer <CRON_SECRET>`. Configure a scheduler that supports the frequency you need and calls this endpoint; check your current Vercel plan's cron limits before relying on the included five-minute `vercel.json` schedule. For lower-cost deployments, Supabase Cron or an external scheduler can call the protected endpoint. Microsoft Graph email additionally requires `Mail.Send` admin consent and a configured sender. Delivery records use the notifications table's unique key to avoid duplicate reminders.
+The protected `GET /api/cron/reminders` endpoint creates per-user in-app reminders for meetings 24 hours and 15 minutes ahead, and contract-expiry reminders for admins 90, 60 and 30 days ahead. It requires `Authorization: Bearer <CRON_SECRET>`; configure the same secret in Vercel so Cron sends the expected authorization header. Vercel Cron runs on Production deployments, not Preview deployments. The included `vercel.json` schedule runs every five minutes, which is needed for timely meeting reminders and requires a Vercel plan that permits that frequency. Hobby cron jobs are limited to once per day; a daily schedule can still process contract reminders but will miss the 24-hour and 15-minute meeting reminder windows. Delivery records use the notifications table's unique key to avoid duplicate reminders.
 
 ## Data and access safeguards
 
@@ -66,4 +55,4 @@ Run the built-in Node test suite with `pnpm test`. It covers effective-dated pay
 
 ## Current implementation boundary
 
-This is an early working foundation, not a production-complete HR system. Employee profiles, edits, and soft-ending are available; permanent deletion is intentionally not exposed so personal records and pay history are retained. Category ratings, rating-history chart, effective-dated admin pay reporting, contract tracking, manual Teams links, Graph event creation, ICS downloads, pasted/uploaded transcripts, rule-based date suggestions, and an explicit action-approval queue are implemented. Google OAuth/Calendar event sync, Graph transcript retrieval, Google Calendar OAuth/event sync, automatic Microsoft transcript retrieval, complete transcript search/detail views, and full server-side validation for every remaining write are still outstanding. Approved dated transcript actions can be published to Outlook when Graph is configured; otherwise they remain approved in StaffTrack. The demo seed script uses a service-role key and explicit safety gate; never run it against production. Do not treat external integrations as configured merely because their environment variable names appear in this checklist.
+This is an early working foundation, not a production-complete HR system. Employee profiles, edits, and soft-ending are available; permanent deletion is intentionally not exposed so personal records and pay history are retained. Category ratings, rating-history chart, effective-dated admin pay reporting, contract tracking, Google Calendar meeting creation, Meet transcript import, ICS downloads, pasted/uploaded transcripts, rule-based date suggestions, and an explicit action-approval queue are implemented. Google Calendar authorization is per user through Vercel Connect. Transcript retrieval depends on Google Meet generating a transcript and the current user being the meeting organizer. The demo seed script uses a service-role key and explicit safety gate; never run it against production.
